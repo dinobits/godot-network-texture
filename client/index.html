@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Webcam to Godot</title>
+</head>
+
+<body style="background-color: grey;">
+    <h3>Webcam</h3>
+    <div>
+        <div class="cameras">
+            <select name="cameras" id="videoSelect"></select>
+            <input name="server" id="serverUrl" value="ws://localhost:9080/desktop" />
+            <input name="imageType" id="imageType" value="image/png" />
+            <label for="isBase64">Send as Base64</label>
+            <input type="checkbox" name="isBase64" id="isBase64" checked />
+        </div>
+        <div>
+            <input type="number" id="targetFPS" value="30" />
+            <input type="number" id="actualFPS" value="0" disabled />
+        </div>
+        <div class="control">
+            <button id="startAndStop">Start</button>
+        </div>
+    </div>
+    <p class="err" id="errorMessage"></p>
+    <div>
+        <table cellpadding="0" cellspacing="0" width="0">
+            <tr>
+                <td>
+                    <video id="videoInput" width=1920 height=1080 playsinline autoplay></video>
+                </td>
+                <td>
+                    <canvas id="canvasOutput" width=1920 height=1080></canvas>
+                </td>
+            </tr>
+            <tr>
+                <td>
+                    <div class="caption">videoInput</div>
+                </td>
+                <td>
+                    <div class="caption">canvasOutput</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+    <script src="https://webrtc.github.io/adapter/adapter-5.0.4.js" type="text/javascript"></script>
+    <script async src="https://docs.opencv.org/master/opencv.js" type="text/javascript"></script>
+    <script>
+        let targetFPSInput = document.getElementById('targetFPS');
+        let targetFPS = targetFPSInput.value;
+        let actualFPSInput = document.getElementById('actualFPS');
+
+        let video = document.getElementById('videoInput');
+        let videoSelect = document.getElementById('videoSelect');
+        let serverUrlInput = document.getElementById('serverUrl');
+        let imageTypeInput = document.getElementById("imageType");
+        let asBase64Checkbox = document.getElementById("isBase64");
+        let canvasOutput = document.getElementById("canvasOutput");
+        let src;
+        let dst;
+        let cap;
+        let streaming = false;
+        let websocket;
+        const byteSize = str => new Blob([str]).size;
+
+        targetFPSInput.onchange = (ev) => {
+            targetFPS = targetFPSInput.value;
+        }
+        navigator.mediaDevices.enumerateDevices().then(gotDevices).catch(handleError);
+
+        function gotDevices(deviceInfos) {
+            for (let i = 0; i !== deviceInfos.length; ++i) {
+                const deviceInfo = deviceInfos[i];
+                const option = document.createElement('option');
+                option.value = deviceInfo.deviceId;
+
+                if (deviceInfo.kind === 'videoinput') {
+                    option.text = deviceInfo.label || `camera ${videoSelect.length + 1}`;
+                    videoSelect.appendChild(option);
+                } else {
+                    console.log('Some other kind of source/device: ', deviceInfo);
+                }
+            }
+        }
+
+        function start() {
+            const videoSource = videoSelect.value;
+            navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: { deviceId: videoSource ? { exact: videoSource } : undefined }
+            }).then((stream) => {
+                window.stream = stream; // make stream available to console
+                video.srcObject = stream;
+                video.play();
+            }).catch(handleError);
+
+            src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            dst = new cv.Mat(video.height, video.width, cv.CV_8UC1);
+            cap = new cv.VideoCapture(video);
+            streaming = true;
+            startAndStop.innerHTML = "Stop";
+            setTimeout(processVideo, 0);
+
+            websocket = new WebSocket(serverUrlInput.value);
+            websocket.onopen = (ev) => {
+                console.log("Socket onopen!");
+            };
+            websocket.onerror = (ev) => {
+                console.log("Socket errored!");
+            }
+            websocket.onclose = (ev) => {
+                console.log("Socket onclosed");
+                stop();
+            };
+        }
+        function stop(restart = true) {
+            streaming = false;
+            startAndStop.innerHTML = "Start";
+            video.srcObject = undefined;
+            if (websocket) {
+                websocket.close();
+                start();
+            }
+        }
+
+        // const FPS = 30;
+        let actualFPS = 0;
+        let lastFPSTime = 0;
+        // const delay = 1;
+        function processVideo() {
+            try {
+                if (!streaming) {
+                    // clean and stop.
+                    src.delete();
+                    dst.delete();
+                    return;
+                }
+                let begin = Date.now();
+                // start processing.
+                cap.read(src);
+                cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+                cv.imshow('canvasOutput', dst);
+                let delay = 1000 / targetFPS - (Date.now() - begin);
+
+                if (websocket && websocket.readyState == WebSocket.OPEN) {
+                    if (asBase64Checkbox.checked) {
+                        console.log(asBase64Checkbox.checked);
+                        let b64image = canvasOutput.toDataURL(imageTypeInput.value);
+                        websocket.send(b64image);
+                        setTimeout(processVideo, delay);
+                        tickFPS();
+                    } else {
+                        let img = canvasOutput.toBlob((blob) => {
+                            websocket.send(blob);
+                            setTimeout(processVideo, delay);
+                            tickFPS();
+                        },
+                            imageTypeInput.value
+                        );
+                    }
+                } else {
+                    // schedule the next one.
+                    // let delay = 1000 / targetFPS - (Date.now() - begin);
+                    setTimeout(processVideo, delay);
+                }
+            } catch (err) {
+                printError(err);
+            }
+        };
+
+        function tickFPS() {
+            actualFPS++;
+            let currentTime = Date.now();
+            // console.log()
+            if (currentTime - lastFPSTime > 1000) {
+                actualFPSInput.value = actualFPS;
+                actualFPS = 0;
+                lastFPSTime = currentTime;
+            }
+        }
+
+        function handleError(promise) {
+            console.error(promise);
+        }
+
+        let startAndStop = document.getElementById("startAndStop");
+        startAndStop.onclick = () => {
+            if (streaming) {
+                stop();
+            } else {
+                start();
+            }
+        };
+    </script>
+    <script>
+        const errorOutput = document.getElementById("errorMessage");
+        function printError(err) {
+            if (typeof err === 'undefined') { err = ''; }
+            else if (typeof err === 'number') {
+                if (!isNaN(err)) {
+                    if (typeof cv !== 'undefined') {
+                        err = 'Exception: ' + cv.exceptionFromPtr(err).msg;
+                    }
+                }
+            }
+            else if (typeof err === 'string') {
+                let ptr = Number(err.split(' ')[0]);
+                if (!isNaN(ptr)) {
+                    if (typeof cv !== 'undefined') {
+                        err = 'Exception: ' + cv.exceptionFromPtr(ptr).msg;
+                    }
+                }
+            }
+            else if (err instanceof Error) { err = err.stack.replace(/\n/g, '<br>'); }
+            errorOutput.innerHTML = err;
+        };
+    </script>
+</body>
+
+</html>
