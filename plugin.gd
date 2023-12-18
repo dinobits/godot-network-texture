@@ -2,7 +2,7 @@
 extends EditorPlugin
 
 
-const AUTOLOAD_NAME = "NetworkTextureServer"
+const AUTOLOAD_NAME = "NetworkTextureServerManager"
 
 
 func _enter_tree():
@@ -13,7 +13,7 @@ func _enter_tree():
 			null)
 	add_autoload_singleton(
 			AUTOLOAD_NAME,
-			"res://addons/network_texture/websocket_image_server.gd"
+			"res://addons/network_texture/server_manager.gd"
 		)
 
 

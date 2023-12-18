@@ -1,11 +1,13 @@
-extends Node
+#class_name WebsocketImageServer
+extends NetworkTextureServer
 
-signal image_data_received(code: String, byte_array: PackedByteArray)
+
+@export var PORT = 9080
+@export var codes: Array[CodeConfig] = []
+
 
 var _sockets: Dictionary = {}
-
-
-const PORT = 9080
+var _caches: Dictionary = {}
 var _server = TCPServer.new()
 
 
@@ -15,13 +17,24 @@ func _ready():
 		set_process(false)
 	else:
 		print("Server should be started")
+		_register()
+
+func _register():
+	for config in codes:
+		_caches[config.code] = []
+		NetworkTextureServerManager.register_server_callback(
+			config.code,
+			func (code: String) -> Image:
+				print('called code: %s, %s' %[code, config.code])
+				return config.decoder.decode(_caches[config.code])
+		)
 
 func _process(_delta):
 	_check_connection()
 
 	for socket in _sockets.keys():
 		_poll(socket)
-		
+
 func _check_connection():
 	while _server.is_connection_available():
 		print("Receiving the connection")
@@ -45,7 +58,8 @@ func _poll(socket: WebSocketPeer):
 			packet = socket.get_packet()
 
 		if (packet):
-			image_data_received.emit(_sockets[socket], packet)
+			#image_data_received.emit(_sockets[socket], packet)
+			_caches[_sockets[socket]] = packet
 	else:
 		if _sockets.has(socket):
 			_sockets.erase(socket)

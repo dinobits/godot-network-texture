@@ -14,9 +14,27 @@ var _image: Image
 
 
 func _init() -> void:
-	print("Network texture initialized: %s; Type: %d" %[image_code,receiving_image_type])
-	call_deferred("_set_image") # To have default image shown. Othervise pink
+	call_deferred("_ready") # To have default image shown. Othervise pink
 
+func _ready() -> void:
+	print("Network texture initialized: %s; 
+		Type: %s;
+		Is base64: %s" %[
+				image_code,
+				ReceivingImageType.keys()[receiving_image_type],
+				is_base64_encoded
+		]
+	)
+	NetworkTextureServerManager.register_texture(self)
+	_set_image()
+#var _first = true
+#func update(image: Image) -> void:
+	##if not _first:
+		##super.update(image)
+		##return
+	##_first = false
+	#print(get_size())
+	#super.set_image(image)
 
 func _set_image():
 	_image = Image.new()
@@ -35,7 +53,6 @@ func _set_image():
 					printerr("ERROR: %s" %error)
 			_base64_prefix = "data:image/jpeg;base64,"
 		_:
-			print("Image type was not set up. Automatching...")
 			create_image =  func (byte_array: PackedByteArray) -> void:
 				var jpg := PackedByteArray([255,216,255,224])
 				var png := PackedByteArray([137,80,78,71])
@@ -61,14 +78,14 @@ func _set_image():
 	if default:
 		set_image(default.get_image())
 
-	NetworkTextureServer.image_data_received.connect(_on_image_received_first_time)
+	NetworkTextureServerManager.image_data_received.connect(_on_image_received_first_time)
 
 func _on_image_received_first_time(code: String, byte_array: PackedByteArray) -> void:
 	if not _update_image_cache(code, byte_array):
 		return
 	set_image(_image)
-	NetworkTextureServer.image_data_received.disconnect(_on_image_received_first_time)
-	NetworkTextureServer.image_data_received.connect(_on_image_received)
+	NetworkTextureServerManager.image_data_received.disconnect(_on_image_received_first_time)
+	NetworkTextureServerManager.image_data_received.connect(_on_image_received)
 
 
 func _on_image_received(code: String, byte_array: PackedByteArray) -> void:
@@ -76,6 +93,7 @@ func _on_image_received(code: String, byte_array: PackedByteArray) -> void:
 	_update_image_cache(code, byte_array)
 #	_image.save_png("res://assets/" + image_code + ".png")
 	update(_image)
+
 
 func _update_image_cache(code: String, byte_array: PackedByteArray) -> bool:
 	print("Image code: %s; Code received: %s" %[image_code, code])
